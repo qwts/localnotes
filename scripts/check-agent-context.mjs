@@ -5,9 +5,19 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const agents = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8');
-const claude = readFileSync(join(ROOT, 'CLAUDE.md'), 'utf8');
 const errors = [];
+
+function readContextFile(filename) {
+  try {
+    return readFileSync(join(ROOT, filename), 'utf8').replaceAll('\r\n', '\n');
+  } catch (error) {
+    errors.push(`${filename} could not be read: ${error.message}`);
+    return '';
+  }
+}
+
+const agents = readContextFile('AGENTS.md');
+const claude = readContextFile('CLAUDE.md');
 
 const START = '<!-- governed:shared-agent-discovery:start -->';
 const END = '<!-- governed:shared-agent-discovery:end -->';
