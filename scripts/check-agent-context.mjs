@@ -11,7 +11,8 @@ function readContextFile(filename) {
   try {
     return readFileSync(join(ROOT, filename), 'utf8').replaceAll('\r\n', '\n');
   } catch (error) {
-    errors.push(`${filename} could not be read: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    errors.push(`${filename} could not be read: ${message}`);
     return '';
   }
 }
@@ -43,7 +44,7 @@ const end = agents.indexOf(END);
 if (occurrences(agents, START) !== 1 || occurrences(agents, END) !== 1) {
   errors.push('AGENTS.md must contain exactly one marked shared discovery block');
 }
-if (start > end) {
+if (start !== -1 && end !== -1 && start > end) {
   errors.push('AGENTS.md discovery markers are out of order');
 }
 const discovery = start !== -1 && end > start
