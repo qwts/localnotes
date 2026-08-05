@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "lint": "tsc --noEmit",
     "test": "node tools/agent-guard/run-guarded.mjs --label test -- npm run test:inner",
-    "test:file": "vitest run",
+    "test:file": "node tools/agent-guard/run-guarded.mjs --label test:file -- npm run test:file:inner --",
+    "test:file:inner": "vitest run",
     "test:inner": "vitest run src && node --test tools/agent-guard/tests/conformance.test.mjs",
     "icons": "node scripts/generate-icons.js"
   },
