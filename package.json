@@ -4,11 +4,12 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "check:agent-context": "node scripts/check-agent-context.mjs",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "npm run check:agent-context && vitest run",
     "icons": "node scripts/generate-icons.js"
   },
   "dependencies": {
