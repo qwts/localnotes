@@ -38,9 +38,9 @@ npm test
 npm run build
 ```
 
-Run one Vitest file with `npx vitest run <path>`. Before pushing, run lint,
-tests, and the production build. CI also runs the governed machine-memory-guard
-conformance test and advanced CodeQL workflow.
+Run one Vitest file with `npm run test:file -- <path>`. Before pushing, run
+lint, tests, and the production build. CI also runs the governed
+machine-memory-guard conformance test and advanced CodeQL workflow.
 
 ## Current scope
 
