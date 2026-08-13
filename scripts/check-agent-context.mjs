@@ -24,10 +24,14 @@ const START = '<!-- governed:shared-agent-discovery:start -->';
 const END = '<!-- governed:shared-agent-discovery:end -->';
 const REQUIRED_POINTERS = [
   'https://github.com/qwts/playbook-engineering/blob/main/docs/reference/agent-conventions.md',
-  'https://github.com/qwts/playbook-engineering/blob/main/skills/README.md',
   'https://github.com/qwts/playbook-engineering/blob/main/docs/sop/README.md',
   'https://github.com/qwts/playbook-engineering/blob/main/docs/decisions/README.md',
 ];
+// The canonical baseline pins the shared-skills index to a reviewed commit, and
+// the pin moves whenever playbook-engineering re-projects the block. Match the
+// shape rather than one sha so a routine re-pin does not fail this check.
+const PINNED_SKILLS_POINTER =
+  /https:\/\/github\.com\/qwts\/playbook-engineering\/blob\/[0-9a-f]{40}\/skills\/README\.md/g;
 const EXPECTED_CLAUDE = `# CLAUDE.md
 
 Start with [AGENTS.md](AGENTS.md), the canonical repository context.
@@ -54,6 +58,9 @@ for (const pointer of REQUIRED_POINTERS) {
   if (occurrences(discovery, pointer) !== 1) {
     errors.push(`the marked discovery block must contain exactly one ${pointer}`);
   }
+}
+if ((discovery.match(PINNED_SKILLS_POINTER) ?? []).length !== 1) {
+  errors.push('the marked discovery block must contain exactly one commit-pinned link to skills/README.md');
 }
 if (claude !== EXPECTED_CLAUDE) {
   errors.push('CLAUDE.md must remain the exact thin adapter onto AGENTS.md');
