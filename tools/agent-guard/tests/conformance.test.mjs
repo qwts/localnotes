@@ -20,9 +20,10 @@ import path from 'node:path';
 import { after, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { parseGrantMinutes } from '../arbiter.mjs';
 import { evaluateCommand, evaluateHookInput } from '../guard-agent-command.mjs';
 import { clampCeiling, deriveBudget } from '../lib/budget.mjs';
-import { isCi, isTrustedHostedCi } from '../lib/policy.mjs';
+import { isCi } from '../lib/policy.mjs';
 import { readMemoryStatus } from '../lib/system-memory.mjs';
 
 // <repo>/tools/agent-guard/tests/this-file → <repo>
@@ -91,6 +92,26 @@ describe('agent-guard conformance (ENG-0138)', () => {
     );
   });
 
+  test('uninstalled identity adapters ship with the fleet harness', () => {
+    const cursor = (json('.cursor/hooks.json').hooks?.beforeShellExecution ?? [])
+      .map((hook) => hook.command ?? '');
+    const claude = hookCommands(json('.claude/settings.json').hooks?.PreToolUse);
+    const codex = hookCommands(json('.codex/hooks.json').hooks?.PreToolUse);
+    for (const [path, commands] of [
+      ['.cursor/hooks.json', cursor],
+      ['.claude/settings.json', claude],
+      ['.codex/hooks.json', codex],
+    ]) {
+      assert.ok(
+        commands.some((command) => (
+          command.includes('agent-bot agent-hook')
+          && command.includes('AGENT_BOT_UNMANAGED_AUTHORS')
+        )),
+        `${path} must carry the uninstalled identity adapter (ENG-0128)`,
+      );
+    }
+  });
+
   test('the worktree-identity hook survives alongside it', () => {
     assert.ok(
       hookCommands(json('.claude/settings.json').hooks?.WorktreeCreate).some((command) => command.includes('claude-worktree-create')),
@@ -142,6 +163,7 @@ describe('agent-guard conformance (ENG-0138)', () => {
     for (const command of [
       'corepack yarn run test:e2e',
       'yarn workspaces foreach -A npm run ci',
+      'npm run ci [z-a]',
       'cat <(npx vitest)',
       "watch -n 1 'npx vitest'",
       'printf x | xargs npx vitest',
@@ -216,14 +238,75 @@ describe('agent-guard conformance (ENG-0138)', () => {
       'rm -rf ~/.cache/agent-guard/lease?',
       'rm -rf ~/.cache/agent-guard/[l]eases',
       'rm -rf ~/.cache/agent-guard/lea{ses,se}',
+      // A script generated, marked executable, and dispatched in one shell
+      // line never existed when the hook inspected the filesystem (#189).
+      "printf 'npx vitest\\n' > lane && chmod +x lane && ./lane",
+      "printf 'npx vitest\\n' > lane; chmod +x lane; ./lane",
+      "printf 'npx vitest\\n' > 'lane' && chmod +x 'lane' && './lane'",
+      "printf 'npx vitest\\n' > /tmp/lane-189 && chmod +x /tmp/lane-189 && /tmp/lane-189",
+      'touch ./lane && ./lane',
+      // Quoting the deletion target does not make it prose (#198).
+      'rm -rf "$XDG_CACHE_HOME/agent-guard"',
+      'rm -rf "$HOME/.cache/agent-guard/leases"',
+      'rm -rf ~/".cache/agent-guard"',
+      'rm -rf "$HOME"/.cache/agent-guard/leases',
+      ': > "$HOME/.cache/agent-guard/leases/live.json"',
     ]) {
       assert.equal(evaluateCommand(command, { env }).allow, false, `expected the guard to deny: ${command}`);
+    }
+  });
+
+  test('unenumerated wrappers cannot hide a heavy lane or test binary', () => {
+    // The prefix stripper knows an enumerated wrapper set; anything outside
+    // it (flock, sudo, doas, chrt, strace, …) must not become a bypass. The
+    // deny-side scans consider every runner-shaped token as a candidate
+    // command start, so the wrapper's argument tail is still inspected.
+    for (const command of [
+      'flock /tmp/agent.lock npm run ci',
+      'sudo npx vitest',
+      'doas npm run test:e2e',
+      'chrt -b 0 node --run ci',
+      'flock /tmp/agent.lock pnpm run test:stories:ci',
+      'strace -f npx playwright test',
+      'sudo -u me npx c8 npm test',
+      'flock /tmp/agent.lock npm run test:e2e:inner',
+      'flock /tmp/agent.lock npm run $lane',
+      // The -c string form runs its payload like `script -c`; a quoted
+      // payload is a command, not prose, and is promoted for the same scans.
+      "flock /tmp/agent.lock -c 'npm run ci'",
+      "flock -n /tmp/agent.lock --command 'npx vitest'",
+    ]) {
+      assert.equal(evaluateCommand(command, { env }).allow, false, `expected the guard to deny: ${command}`);
+    }
+    // The canonical wrapper still carries its own sanctioned tail, and a
+    // runner-shaped word in argument position is data, not an invocation.
+    for (const command of [
+      'node tools/agent-guard/run-guarded.mjs --label test:e2e -- npm run test:e2e:inner',
+      'brew info npm',
+      'git log --oneline -- vitest.config.ts',
+      "flock /tmp/agent.lock -c 'npm run lint'",
+    ]) {
+      assert.equal(evaluateCommand(command, { env }).allow, true, `expected the guard to allow: ${command}`);
     }
   });
 
   test('the guard denies tampering with its own controls', () => {
     for (const command of ['AGENT_GUARD_FORCE=1 npm run test:dom', 'AGENT_GUARD_ASSUME_HUMAN=1 npm run test:dom', 'node tools/agent-guard/arbiter.mjs grant e2e']) {
       assert.equal(evaluateCommand(command, { env }).allow, false, `expected the guard to deny: ${command}`);
+    }
+  });
+
+  test('grant honors the documented --minutes flag instead of silently defaulting', () => {
+    // In-process on purpose: spawning the real arbiter would mint a real
+    // machine-wide grant — stateDir ignores env overrides for real processes.
+    assert.deepEqual(parseGrantMinutes(['grant', 'e2e', '--minutes', '5']), { ok: true, minutes: 5 });
+    assert.deepEqual(parseGrantMinutes(['grant', 'e2e', '7']), { ok: true, minutes: 7 });
+    assert.deepEqual(parseGrantMinutes(['grant', 'e2e']), { ok: true, minutes: 30 });
+    assert.deepEqual(parseGrantMinutes(['grant', 'e2e', '--minutes', '9999']), { ok: true, minutes: 240 });
+    // 0.1 is positive but rounds to zero minutes — a grant already expired at
+    // write time must be a refusal, not a reported success.
+    for (const argv of [['grant', 'e2e', '--minutes', 'soon'], ['grant', 'e2e', '--minutes'], ['grant', 'e2e', '--minutes', '-5'], ['grant', 'e2e', '--minutes', '0'], ['grant', 'e2e', '--minutes', '0.1'], ['grant', 'e2e', '0.4']]) {
+      assert.equal(parseGrantMinutes(argv).ok, false, `expected a refusal for: ${argv.join(' ')}`);
     }
   });
 
@@ -235,6 +318,26 @@ describe('agent-guard conformance (ENG-0138)', () => {
     assert.equal(evaluateCommand('cat > /tmp/doc <<.\nnpm run "$lane"\n.', { env }).allow, true);
     assert.equal(evaluateCommand('cat <<FIRST <<SECOND\nnpm run ci\nFIRST\nnpx vitest\nSECOND', { env }).allow, true);
     assert.equal(evaluateCommand('cat agent-health-guard/leases/live.json', { env }).allow, true);
+    // Protected-variable text inside quotes is a mention, not an assignment
+    // (#192): commit messages, search patterns, and file payloads are data.
+    for (const command of [
+      'rg "NODE_OPTIONS=" docs',
+      'git commit -m "Document PATH=/usr/bin"',
+      "printf 'PATH=/tmp\\n' > note.txt",
+      "echo 'NODE_OPTIONS=--require ./x'",
+      'git log --grep "GIT_SSH_COMMAND=" --oneline',
+    ]) {
+      assert.equal(evaluateCommand(command, { env }).allow, true, `expected the guard to allow: ${command}`);
+    }
+    // Relative paths as command *arguments* are not dispatches (#189):
+    // creating or naming a file is fine as long as nothing executes it.
+    for (const command of [
+      "printf 'notes\\n' > lane && git add lane",
+      'mkdir -p dist && cp cli.mjs dist/cli.mjs',
+      './configure-does-not-exist',
+    ]) {
+      assert.equal(evaluateCommand(command, { env }).allow, true, `expected the guard to allow: ${command}`);
+    }
   });
 
   test('directly executed text scripts cannot hide protected commands', () => {
@@ -273,7 +376,7 @@ describe('agent-guard conformance (ENG-0138)', () => {
     assert.equal(status.availableMb, 3225);
   });
 
-  test('CI is exempt, so this never slows a hosted runner down', () => {
+  test('CI markers are informational and never grant a wrapper exemption', () => {
     assert.equal(isCi({ GITHUB_ACTIONS: 'true' }), true);
     assert.equal(isCi({ CI: 'true' }), true);
     assert.equal(isCi({}), false);
@@ -284,14 +387,22 @@ describe('agent-guard conformance (ENG-0138)', () => {
       GITHUB_WORKSPACE: '/home/runner/work/repo/repo',
       RUNNER_TEMP: '/home/runner/work/_temp',
     };
-    assert.equal(isTrustedHostedCi({ env: hosted, cwd: hosted.GITHUB_WORKSPACE, platform: 'linux' }), true);
-    assert.equal(isTrustedHostedCi({ env: hosted, cwd: root, platform: 'linux' }), false);
+    assert.equal(isCi(hosted), true);
   });
 
   test('an inherited CI marker does not exempt an agent process', () => {
     const runner = path.join(root, 'tools/agent-guard/run-guarded.mjs');
+    // `AGENT_GUARDED` is reset here, with the CI markers, rather than per
+    // spawn: when this suite itself runs nested inside a guarded lane, the
+    // inherited value names a live lease and `run-guarded.mjs` passes the
+    // inner run straight through, so every case below would exit 0 and assert
+    // the opposite of what it means to. Three of the four spawns used to reset
+    // it individually and `forgedHosted` did not, which made the whole suite
+    // fail under any local `npm test` while CI — which invokes the inner lane
+    // unwrapped, with `AGENT_GUARDED` unset — stayed green.
     const localProcessEnv = {
       ...process.env,
+      AGENT_GUARDED: '',
       GITHUB_ACTIONS: '',
       RUNNER_ENVIRONMENT: '',
       GITHUB_WORKSPACE: '',
@@ -300,14 +411,14 @@ describe('agent-guard conformance (ENG-0138)', () => {
     const result = spawnSync(process.execPath, [runner, '--label', 'test:e2e', '--', process.execPath, '-e', 'process.exit(0)'], {
       cwd: root,
       encoding: 'utf8',
-      env: { ...localProcessEnv, AGENT_GUARDED: '', AI_AGENT: 'codex', CI: '1' },
+      env: { ...localProcessEnv, AI_AGENT: 'codex', CI: '1' },
     });
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /agents do not run it on this machine/u);
     const forgedHuman = spawnSync(process.execPath, [runner, '--label', 'test:e2e', '--', process.execPath, '-e', 'process.exit(0)'], {
       cwd: root,
       encoding: 'utf8',
-      env: { ...localProcessEnv, AGENT_GUARDED: '', AGENT_GUARD_ASSUME_HUMAN: '1', AI_AGENT: 'codex' },
+      env: { ...localProcessEnv, AGENT_GUARD_ASSUME_HUMAN: '1', AI_AGENT: 'codex' },
     });
     assert.notEqual(forgedHuman.status, 0);
     const strippedIdentity = spawnSync(process.execPath, [runner, '--label', 'test:e2e', '--', process.execPath, '-e', 'process.exit(0)'], {
@@ -316,5 +427,21 @@ describe('agent-guard conformance (ENG-0138)', () => {
       env: { HOME: process.env.HOME, PATH: process.env.PATH },
     });
     assert.notEqual(strippedIdentity.status, 0);
+    const forgedHosted = spawnSync(process.execPath, [runner, '--label', 'test:e2e', '--', process.execPath, '-e', 'process.exit(0)'], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...localProcessEnv,
+        CI: 'true',
+        GITHUB_ACTIONS: 'true',
+        RUNNER_ENVIRONMENT: 'github-hosted',
+        GITHUB_WORKSPACE: '/home/runner/work/repo/repo',
+        RUNNER_TEMP: '/home/runner/work/_temp',
+        ACTIONS_ID_TOKEN_REQUEST_URL: 'https://attacker.invalid/token',
+        ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'forged',
+      },
+    });
+    assert.notEqual(forgedHosted.status, 0);
+    assert.match(forgedHosted.stderr, /agents do not run it on this machine/u);
   });
 });
