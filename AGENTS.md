@@ -41,7 +41,6 @@ inherit by default, vary by explicit delta).
 - **Validation:** run `npm run check:agent-context`, `npm run lint`, `npm test`,
   and `npm run build` before calling a change complete.
 
-Run one Vitest file through the memory guard with
-`npm run test:file -- <path>`. CI also runs the governed machine-memory-guard
-conformance test. GitHub CodeQL default setup provides the repository's code
-scanning until an approved migration replaces it with advanced setup.
+Run one Vitest file with `npm run test:file -- <path>`. GitHub CodeQL default
+setup provides the repository's code scanning until an approved migration
+replaces it with advanced setup.
