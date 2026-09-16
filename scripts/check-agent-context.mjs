@@ -23,12 +23,12 @@ const claude = readContextFile('CLAUDE.md');
 const START = '<!-- governed:shared-agent-discovery:start -->';
 const END = '<!-- governed:shared-agent-discovery:end -->';
 const REQUIRED_POINTERS = [
-  'https://github.com/qwts/playbook-engineering/blob/main/docs/reference/agent-conventions.md',
-  'https://github.com/qwts/playbook-engineering/blob/main/docs/sop/README.md',
-  'https://github.com/qwts/playbook-engineering/blob/main/docs/decisions/README.md',
+  'https://github.com/qwts/agent-sop/blob/main/docs/reference/agent-conventions.md',
+  'https://github.com/qwts/agent-sop/blob/main/docs/sop/README.md',
+  'https://github.com/qwts/agent-sop/blob/main/docs/decisions/README.md',
 ];
 // The canonical baseline pins the shared-skills index to a reviewed commit, and
-// the pin moves whenever playbook-engineering re-projects the block. Match the
+// the pin moves whenever agent-sop re-projects the block. Match the
 // shape rather than one sha so a routine re-pin does not fail this check.
 const PINNED_SKILLS_POINTER =
   /https:\/\/github\.com\/qwts\/playbook-engineering\/blob\/[0-9a-f]{40}\/skills\/README\.md/g;
