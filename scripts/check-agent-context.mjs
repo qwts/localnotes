@@ -31,7 +31,7 @@ const REQUIRED_POINTERS = [
 // the pin moves whenever agent-sop re-projects the block. Match the
 // shape rather than one sha so a routine re-pin does not fail this check.
 const PINNED_SKILLS_POINTER =
-  /https:\/\/github\.com\/qwts\/playbook-engineering\/blob\/[0-9a-f]{40}\/skills\/README\.md/g;
+  /https:\/\/github\.com\/qwts\/agent-sop\/blob\/[0-9a-f]{40}\/skills\/README\.md/g;
 const EXPECTED_CLAUDE = `# CLAUDE.md
 
 Start with [AGENTS.md](AGENTS.md), the canonical repository context.
